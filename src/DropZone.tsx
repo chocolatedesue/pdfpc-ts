@@ -28,7 +28,10 @@ export function DropZone(props: DropZoneProps) {
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
       const file = files[0];
-      if (file.type === "application/pdf") {
+      const isPdf =
+        file.type === "application/pdf" ||
+        file.name.toLowerCase().endsWith(".pdf");
+      if (isPdf) {
         props.onFileSelect(file);
       } else {
         alert("请上传 PDF 文件");
@@ -39,7 +42,7 @@ export function DropZone(props: DropZoneProps) {
   const handleClick = () => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "application/pdf";
+    input.accept = "application/pdf,.pdf";
     input.onchange = (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {

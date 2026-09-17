@@ -44,6 +44,12 @@ export function Recorder(props: RecorderProps) {
     let img = imageCache.get(index);
     if (!img || img.src !== url) {
       img = new Image();
+      img.onload = () => {
+        if (isRecording() && props.globalCount() === index) {
+          renderSlideToOffscreen();
+          blitMainCanvas();
+        }
+      };
       img.src = url;
       imageCache.set(index, img);
     }
@@ -154,20 +160,22 @@ export function Recorder(props: RecorderProps) {
   }
 
   // Track slide visits and trigger canvas redraw on slide change
-  createEffect(() => {
-    const idx = props.globalCount();
-    if (isRecording()) {
-      setVisitedSlides((prev) => {
-        if (!prev.includes(idx + 1)) {
-          return [...prev, idx + 1].sort((a, b) => a - b);
-        }
-        return prev;
-      });
+  createEffect(
+    () => ({ idx: props.globalCount(), recording: isRecording() }),
+    ({ idx, recording }) => {
+      if (recording) {
+        setVisitedSlides((prev) => {
+          if (!prev.includes(idx + 1)) {
+            return [...prev, idx + 1].sort((a, b) => a - b);
+          }
+          return prev;
+        });
 
-      renderSlideToOffscreen();
-      blitMainCanvas();
+        renderSlideToOffscreen();
+        blitMainCanvas();
+      }
     }
-  });
+  );
 
   async function startRecording() {
     if (props.filePageCount() <= 0) {

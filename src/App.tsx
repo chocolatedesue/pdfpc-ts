@@ -186,6 +186,7 @@ const OVERVIEW = 0,
   PRESENTER = 1;
 
 const [viewMode, setViewMode] = createSignal(OVERVIEW);
+const [hasNotes, setHasNotes] = createSignal(false);
 
 export function setDocImagesWrapper(index: number, url: string) {
   setDocImages((prev) => {
@@ -193,6 +194,15 @@ export function setDocImagesWrapper(index: number, url: string) {
     newArr[index] = url;
     return newArr;
   });
+  if (index === 0) {
+    const img = new Image();
+    img.onload = () => {
+      if (img.naturalWidth / img.naturalHeight > 2.5) {
+        setHasNotes(true);
+      }
+    };
+    img.src = url;
+  }
 }
 
 _worker.addEventListener("message", (event) => {
@@ -208,10 +218,18 @@ const handler = (e: KeyboardEvent) => {
   switch (e.key) {
     case "ArrowRight":
     case " ":
+    case "PageDown":
       nextPage();
       break;
     case "ArrowLeft":
+    case "PageUp":
       previousPage();
+      break;
+    case "Tab":
+      e.preventDefault();
+      document.startViewTransition?.(() => {
+        setViewMode((prev) => (prev === OVERVIEW ? PRESENTER : OVERVIEW));
+      }) ?? setViewMode((prev) => (prev === OVERVIEW ? PRESENTER : OVERVIEW));
       break;
     case "Escape":
       if (w()) {
@@ -235,7 +253,10 @@ function PopupRoot() {
           <img
             src={docImages()[globalCount()]}
             alt="slide"
-            class="h-full w-auto object-cover object-left"
+            class={cx(
+              "h-full w-auto object-cover",
+              hasNotes() ? "object-left" : "object-center",
+            )}
           />
         </Show>
       </div>
@@ -244,8 +265,9 @@ function PopupRoot() {
 }
 
 const handleFileSelect =
-  (_type: "no-notes" | "notes-right") => async (selectedFile: File) => {
+  (type: "no-notes" | "notes-right") => async (selectedFile: File) => {
     console.log("Selected file:", selectedFile);
+    setHasNotes(type === "notes-right");
     const u =
       "bytes" in Blob.prototype
         ? await selectedFile.bytes()
@@ -255,6 +277,7 @@ const handleFileSelect =
       await worker.loadPDF(transfer(u, [u.buffer]));
       const c = await worker.pageCount();
       setFilePageCount(c);
+      setViewMode(PRESENTER);
       for (let i = 0; i < c; i++) {
         await worker.renderPDF(i, proxy(setDocImagesWrapper));
       }
@@ -350,13 +373,17 @@ function App() {
                       index() !== globalCount() &&
                         "outline-cat-surface2 hover:outline-4",
                     )}
-                    onClick={() => setGlobalCount(index())}
+                    onClick={() => {
+                      setGlobalCount(index());
+                      setViewMode(PRESENTER);
+                    }}
                   >
                     <Show when={docImages()[index()]}>
                       <img
                         src={docImages()[index()]}
                         class={cx(
-                          "h-full object-cover object-left",
+                          "h-full object-cover",
+                          hasNotes() ? "object-left" : "object-center",
                           viewClasses[index()],
                         )}
                       />
@@ -367,8 +394,8 @@ function App() {
             </div>
           }
         >
-          {/* Left: hint */}
-          {/* Right Top: Current page */}
+          {/* Left: main slide / notes */}
+          {/* Right Top: Current page (when notes present) or Next page info */}
           {/* Right Bottom: Next page */}
           <div class="grid h-full grid-cols-21 gap-4">
             <div class="col-span-13 flex items-center justify-center">
@@ -376,8 +403,11 @@ function App() {
                 <Show when={docImages()[globalCount()]}>
                   <img
                     src={docImages()[globalCount()]}
-                    alt="current slide note"
-                    class="aspect-video h-full object-cover object-right"
+                    alt={hasNotes() ? "current slide note" : "current slide"}
+                    class={cx(
+                      "aspect-video h-full object-cover",
+                      hasNotes() ? "object-right" : "object-center",
+                    )}
                   />
                   <div class="absolute -top-8 font-mono">
                     {secondsToMMSS(timer())}
@@ -389,32 +419,63 @@ function App() {
               </div>
             </div>
             <div class="col-span-8 flex flex-col items-center justify-center gap-4">
-              <div class="aspect-video w-full overflow-hidden">
-                <Show when={docImages()[globalCount()]}>
-                  <img
-                    src={docImages()[globalCount()]}
-                    alt="current slide"
-                    id="presenter-current-left"
-                    class={cx(
-                      "aspect-video h-full object-cover object-left",
-                      viewClasses[globalCount()],
-                    )}
-                  />
-                </Show>
-              </div>
-              <div class="aspect-video w-full overflow-hidden">
-                <Show when={docImages()[globalCount() + 1]}>
-                  <img
-                    src={docImages()[globalCount() + 1]}
-                    alt="next slide"
-                    class={cx(
-                      "aspect-video h-full cursor-pointer object-cover object-left opacity-50",
-                      viewClasses[globalCount() + 1],
-                    )}
-                    onClick={nextPage}
-                  />
-                </Show>
-              </div>
+              <Show
+                when={hasNotes()}
+                fallback={
+                  <div class="flex flex-col items-center justify-center gap-2 w-full">
+                    <div class="w-full text-left text-sm font-mono text-cat-subtext0">
+                      NEXT SLIDE ({globalCount() + 2 > filePageCount() ? "END" : `${globalCount() + 2}/${filePageCount()}`})
+                    </div>
+                    <div class="aspect-video w-full overflow-hidden rounded border border-cat-surface1">
+                      <Show
+                        when={docImages()[globalCount() + 1]}
+                        fallback={
+                          <div class="flex h-full w-full items-center justify-center text-cat-subtext0 bg-cat-surface0/30 font-mono">
+                            End of presentation
+                          </div>
+                        }
+                      >
+                        <img
+                          src={docImages()[globalCount() + 1]}
+                          alt="next slide"
+                          class={cx(
+                            "aspect-video h-full cursor-pointer object-cover object-center opacity-60 hover:opacity-100 transition-opacity",
+                            viewClasses[globalCount() + 1],
+                          )}
+                          onClick={nextPage}
+                        />
+                      </Show>
+                    </div>
+                  </div>
+                }
+              >
+                <div class="aspect-video w-full overflow-hidden">
+                  <Show when={docImages()[globalCount()]}>
+                    <img
+                      src={docImages()[globalCount()]}
+                      alt="current slide"
+                      id="presenter-current-left"
+                      class={cx(
+                        "aspect-video h-full object-cover object-left",
+                        viewClasses[globalCount()],
+                      )}
+                    />
+                  </Show>
+                </div>
+                <div class="aspect-video w-full overflow-hidden">
+                  <Show when={docImages()[globalCount() + 1]}>
+                    <img
+                      src={docImages()[globalCount() + 1]}
+                      alt="next slide"
+                      class={cx(
+                        "aspect-video h-full cursor-pointer object-cover object-left opacity-50 hover:opacity-80 transition-opacity",
+                        viewClasses[globalCount() + 1],
+                      )}
+                      onClick={nextPage}
+                    />
+                  </Show>
+                </div>
+              </Show>
             </div>
           </div>
           {/* Bottom: notes */}
