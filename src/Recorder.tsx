@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, Show, For } from "solid-js";
+import { createSignal, onCleanup, createEffect, Show, For } from "solid-js";
 import { cx } from "classix";
 
 interface RecorderProps {
@@ -14,6 +14,7 @@ export function Recorder(props: RecorderProps) {
   const [showReviewModal, setShowReviewModal] = createSignal(false);
   const [useCamera, setUseCamera] = createSignal(false);
   const [recordMode, setRecordMode] = createSignal<"slide" | "screen">("slide");
+  const [quality, setQuality] = createSignal<"1080p" | "720p">("1080p");
   const [recordedVideoUrl, setRecordedVideoUrl] = createSignal<string | null>(null);
   const [lastDuration, setLastDuration] = createSignal(0);
   const [lastExt, setLastExt] = createSignal("webm");
@@ -22,11 +23,19 @@ export function Recorder(props: RecorderProps) {
 
   let mediaRecorder: MediaRecorder | null = null;
   let timerInterval: number | null = null;
+  let heartbeatInterval: number | null = null;
   let animFrameId: number | null = null;
   let activeStreams: MediaStream[] = [];
   let videoPlayerRef: HTMLVideoElement | null = null;
+  let cameraVideoEl: HTMLVideoElement | null = null;
+  let currentBlobUrl: string | null = null;
 
-  // Cached slide images
+  // Offscreen slide canvas (cached slide render, avoids downsampling 60fps)
+  let offscreenCanvas: HTMLCanvasElement | null = null;
+  let mainCanvas: HTMLCanvasElement | null = null;
+  let mainCtx: CanvasRenderingContext2D | null = null;
+
+  // Cached HTMLImageElements
   const imageCache = new Map<number, HTMLImageElement>();
 
   function getSlideImg(index: number): HTMLImageElement | null {
@@ -39,6 +48,13 @@ export function Recorder(props: RecorderProps) {
       imageCache.set(index, img);
     }
     return img.complete && img.naturalWidth > 0 ? img : null;
+  }
+
+  function getResolution(): { width: number; height: number; bitrate: number } {
+    if (quality() === "720p") {
+      return { width: 1280, height: 720, bitrate: 1_200_000 }; // 1.2 Mbps
+    }
+    return { width: 1920, height: 1080, bitrate: 2_200_000 }; // 2.2 Mbps
   }
 
   function getMimeInfo(): { mime: string; ext: string } {
@@ -63,6 +79,96 @@ export function Recorder(props: RecorderProps) {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   }
 
+  // Pre-render the current slide onto the offscreen canvas ONCE per slide transition
+  function renderSlideToOffscreen() {
+    if (!offscreenCanvas) return;
+    const offCtx = offscreenCanvas.getContext("2d");
+    if (!offCtx) return;
+
+    const { width, height } = getResolution();
+    offCtx.fillStyle = "#0F2744"; // DEEP navy ground
+    offCtx.fillRect(0, 0, width, height);
+
+    const currentIdx = props.globalCount();
+    const img = getSlideImg(currentIdx);
+    if (img) {
+      const isDoubleWide = img.naturalWidth / img.naturalHeight > 2.5;
+      const srcW = isDoubleWide ? img.naturalWidth / 2 : img.naturalWidth;
+      const srcH = img.naturalHeight;
+      offCtx.drawImage(img, 0, 0, srcW, srcH, 0, 0, width, height);
+    }
+  }
+
+  // Draw camera PiP
+  function drawCamera(ctx: CanvasRenderingContext2D, width: number, height: number) {
+    if (!cameraVideoEl || cameraVideoEl.readyState < 2) return;
+
+    const pipW = Math.round(width * 0.18); // ~345px on 1080p
+    const pipH = Math.round(pipW * 0.65);
+    const pipX = width - pipW - Math.round(width * 0.02);
+    const pipY = height - pipH - Math.round(height * 0.03);
+    const rad = 12;
+
+    ctx.save();
+    ctx.shadowColor = "rgba(0, 0, 0, 0.45)";
+    ctx.shadowBlur = 12;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 4;
+
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(pipX, pipY, pipW, pipH, rad);
+    } else {
+      ctx.rect(pipX, pipY, pipW, pipH);
+    }
+    ctx.fillStyle = "#000000";
+    ctx.fill();
+    ctx.clip();
+
+    ctx.drawImage(cameraVideoEl, pipX, pipY, pipW, pipH);
+    ctx.restore();
+
+    // Subtle outline border
+    ctx.save();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(pipX, pipY, pipW, pipH, rad);
+    } else {
+      ctx.rect(pipX, pipY, pipW, pipH);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Update canvas: Fast GPU blit from offscreen canvas + camera PiP
+  function blitMainCanvas() {
+    if (!mainCanvas || !mainCtx || !offscreenCanvas) return;
+    const { width, height } = getResolution();
+    mainCtx.drawImage(offscreenCanvas, 0, 0, width, height);
+
+    if (useCamera()) {
+      drawCamera(mainCtx, width, height);
+    }
+  }
+
+  // Track slide visits and trigger canvas redraw on slide change
+  createEffect(() => {
+    const idx = props.globalCount();
+    if (isRecording()) {
+      setVisitedSlides((prev) => {
+        if (!prev.includes(idx + 1)) {
+          return [...prev, idx + 1].sort((a, b) => a - b);
+        }
+        return prev;
+      });
+
+      renderSlideToOffscreen();
+      blitMainCanvas();
+    }
+  });
+
   async function startRecording() {
     if (props.filePageCount() <= 0) {
       alert("请先加载演示文稿 PDF 文件");
@@ -71,9 +177,16 @@ export function Recorder(props: RecorderProps) {
 
     try {
       activeStreams = [];
-      const slidesSet = new Set<number>();
-      slidesSet.add(props.globalCount() + 1);
-      setVisitedSlides([props.globalCount() + 1]);
+      const initialSlide = props.globalCount() + 1;
+      setVisitedSlides([initialSlide]);
+
+      const { width, height, bitrate } = getResolution();
+
+      // Revoke any previous recording URL to free memory
+      if (currentBlobUrl) {
+        URL.revokeObjectURL(currentBlobUrl);
+        currentBlobUrl = null;
+      }
 
       let recordStream: MediaStream;
 
@@ -85,7 +198,13 @@ export function Recorder(props: RecorderProps) {
         activeStreams.push(displayStream);
 
         const micStream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1, // Mono audio saves memory and clarifies voice
+            sampleRate: 48000,
+          },
         });
         activeStreams.push(micStream);
 
@@ -110,102 +229,71 @@ export function Recorder(props: RecorderProps) {
           stopRecording();
         };
       } else {
-        // High-definition slide canvas mode (1920x1080)
-        const canvas = document.createElement("canvas");
-        canvas.width = 1920;
-        canvas.height = 1080;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("无法创建 2D 画布上下文");
+        // High-definition slide canvas mode
+        offscreenCanvas = document.createElement("canvas");
+        offscreenCanvas.width = width;
+        offscreenCanvas.height = height;
 
+        mainCanvas = document.createElement("canvas");
+        mainCanvas.width = width;
+        mainCanvas.height = height;
+        mainCtx = mainCanvas.getContext("2d", { alpha: false, desynchronized: true });
+        if (!mainCtx) throw new Error("无法初始化画布渲染上下文");
+
+        // High quality microphone capture
         const micStream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1,
+            sampleRate: 48000,
+          },
         });
         activeStreams.push(micStream);
 
-        let cameraVideo: HTMLVideoElement | null = null;
+        // Optional Camera PiP
+        cameraVideoEl = null;
         if (useCamera()) {
           try {
             const camStream = await navigator.mediaDevices.getUserMedia({
               video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
             });
             activeStreams.push(camStream);
-            cameraVideo = document.createElement("video");
-            cameraVideo.srcObject = camStream;
-            cameraVideo.muted = true;
-            cameraVideo.playsInline = true;
-            await cameraVideo.play();
+            cameraVideoEl = document.createElement("video");
+            cameraVideoEl.srcObject = camStream;
+            cameraVideoEl.muted = true;
+            cameraVideoEl.playsInline = true;
+            await cameraVideoEl.play();
           } catch (camErr) {
-            console.warn("摄像头启动失败，仅进行音频录制:", camErr);
+            console.warn("摄像头启动失败，继续使用纯音频录制:", camErr);
           }
         }
 
-        // 30 FPS Render Loop
-        const renderFrame = () => {
-          // Fill deep navy background
-          ctx.fillStyle = "#0F2744";
-          ctx.fillRect(0, 0, 1920, 1080);
+        // 1. Initial draw BEFORE starting recorder (prevents first-frame sync lag)
+        renderSlideToOffscreen();
+        blitMainCanvas();
 
-          const currentIdx = props.globalCount();
-          if (!slidesSet.has(currentIdx + 1)) {
-            slidesSet.add(currentIdx + 1);
-            setVisitedSlides(Array.from(slidesSet).sort((a, b) => a - b));
-          }
+        // 2. Optimized rendering strategy:
+        // If camera is ON: runs requestAnimationFrame to smoothly animate camera PiP at 30fps
+        // If camera is OFF: relies on event-driven slide changes + 1fps heartbeat to avoid CPU burn
+        if (useCamera()) {
+          const animLoop = () => {
+            blitMainCanvas();
+            animFrameId = requestAnimationFrame(animLoop);
+          };
+          animFrameId = requestAnimationFrame(animLoop);
+        } else {
+          // Low overhead heartbeat (1 frame every 500ms) to ensure stream timestamps advance
+          heartbeatInterval = window.setInterval(() => {
+            blitMainCanvas();
+          }, 500);
+        }
 
-          const img = getSlideImg(currentIdx);
-          if (img) {
-            const isDoubleWide = img.naturalWidth / img.naturalHeight > 2.5;
-            const srcW = isDoubleWide ? img.naturalWidth / 2 : img.naturalWidth;
-            const srcH = img.naturalHeight;
-            ctx.drawImage(img, 0, 0, srcW, srcH, 0, 0, 1920, 1080);
-          }
+        // FPS for canvas capture: 30 if camera is on, 20 if pure slides
+        const targetFps = useCamera() ? 30 : 20;
+        const canvasStream = mainCanvas.captureStream(targetFps);
 
-          // Render Camera Picture-in-Picture if active
-          if (cameraVideo && cameraVideo.readyState >= 2) {
-            const pipW = 340;
-            const pipH = 220;
-            const pipX = 1920 - pipW - 32;
-            const pipY = 1080 - pipH - 32;
-            const rad = 14;
-
-            ctx.save();
-            ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
-            ctx.shadowBlur = 16;
-            ctx.shadowOffsetX = 0;
-            ctx.shadowOffsetY = 4;
-
-            ctx.beginPath();
-            if (ctx.roundRect) {
-              ctx.roundRect(pipX, pipY, pipW, pipH, rad);
-            } else {
-              ctx.rect(pipX, pipY, pipW, pipH);
-            }
-            ctx.fillStyle = "#000000";
-            ctx.fill();
-            ctx.clip();
-
-            ctx.drawImage(cameraVideo, pipX, pipY, pipW, pipH);
-            ctx.restore();
-
-            // Outline border
-            ctx.save();
-            ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            if (ctx.roundRect) {
-              ctx.roundRect(pipX, pipY, pipW, pipH, rad);
-            } else {
-              ctx.rect(pipX, pipY, pipW, pipH);
-            }
-            ctx.stroke();
-            ctx.restore();
-          }
-
-          animFrameId = requestAnimationFrame(renderFrame);
-        };
-
-        renderFrame();
-
-        const canvasStream = canvas.captureStream(30);
         recordStream = new MediaStream([
           ...canvasStream.getVideoTracks(),
           ...micStream.getAudioTracks(),
@@ -213,12 +301,15 @@ export function Recorder(props: RecorderProps) {
       }
 
       const mimeInfo = getMimeInfo();
-      const recorder = new MediaRecorder(
-        recordStream,
-        mimeInfo.mime ? { mimeType: mimeInfo.mime } : undefined
-      );
+      const recorderOptions: MediaRecorderOptions = {
+        mimeType: mimeInfo.mime || undefined,
+        videoBitsPerSecond: bitrate,
+        audioBitsPerSecond: 128_000, // 128 kbps voice
+      };
+
+      const recorder = new MediaRecorder(recordStream, recorderOptions);
       mediaRecorder = recorder;
-      const chunks: Blob[] = [];
+      let chunks: Blob[] = [];
 
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
@@ -231,25 +322,32 @@ export function Recorder(props: RecorderProps) {
           cancelAnimationFrame(animFrameId);
           animFrameId = null;
         }
+        if (heartbeatInterval !== null) {
+          clearInterval(heartbeatInterval);
+          heartbeatInterval = null;
+        }
+        if (timerInterval !== null) {
+          clearInterval(timerInterval);
+          timerInterval = null;
+        }
         for (const st of activeStreams) {
           st.getTracks().forEach((t) => t.stop());
         }
         activeStreams = [];
 
-        if (timerInterval !== null) {
-          clearInterval(timerInterval);
-          timerInterval = null;
-        }
-
+        // Build blob and clean up chunks
         const finalBlob = new Blob(chunks, { type: mimeInfo.mime || "video/webm" });
-        const url = URL.createObjectURL(finalBlob);
+        chunks = []; // Release memory chunk array
+
+        currentBlobUrl = URL.createObjectURL(finalBlob);
         setLastDuration(recordingSeconds());
         setLastExt(mimeInfo.ext);
-        setRecordedVideoUrl(url);
+        setRecordedVideoUrl(currentBlobUrl);
         setIsRecording(false);
         setShowReviewModal(true);
       };
 
+      // 1-second timeslice periodically flushes buffers
       recorder.start(1000);
       setIsRecording(true);
       setRecordingSeconds(0);
@@ -273,6 +371,10 @@ export function Recorder(props: RecorderProps) {
       if (timerInterval !== null) {
         clearInterval(timerInterval);
         timerInterval = null;
+      }
+      if (heartbeatInterval !== null) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
       }
       if (animFrameId !== null) {
         cancelAnimationFrame(animFrameId);
@@ -308,6 +410,10 @@ export function Recorder(props: RecorderProps) {
 
   onCleanup(() => {
     stopRecording();
+    if (currentBlobUrl) {
+      URL.revokeObjectURL(currentBlobUrl);
+      currentBlobUrl = null;
+    }
   });
 
   return (
@@ -407,10 +513,41 @@ export function Recorder(props: RecorderProps) {
                 </div>
                 <p class="mt-1 text-[10px] text-cat-overlay1">
                   {recordMode() === "slide"
-                    ? "以 1080p 纯净画布录制幻灯片，无弹窗与杂边干扰"
+                    ? "以纯净画布录制幻灯片，无弹窗与杂边干扰"
                     : "捕获外接屏幕或独立投影窗口，包含鼠标轨迹"}
                 </p>
               </div>
+
+              {/* Quality Selection */}
+              <Show when={recordMode() === "slide"}>
+                <div>
+                  <label class="mb-1 block text-cat-subtext0 font-medium">清晰度 / 性能</label>
+                  <div class="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setQuality("1080p")}
+                      class={cx(
+                        "cursor-pointer rounded-lg border px-2 py-1 text-center font-medium transition-all",
+                        quality() === "1080p"
+                          ? "border-cat-teal bg-cat-teal/20 text-cat-teal"
+                          : "border-cat-surface1 bg-cat-surface0/50 text-cat-subtext0 hover:border-cat-surface2"
+                      )}
+                    >
+                      1080p (高清)
+                    </button>
+                    <button
+                      onClick={() => setQuality("720p")}
+                      class={cx(
+                        "cursor-pointer rounded-lg border px-2 py-1 text-center font-medium transition-all",
+                        quality() === "720p"
+                          ? "border-cat-teal bg-cat-teal/20 text-cat-teal"
+                          : "border-cat-surface1 bg-cat-surface0/50 text-cat-subtext0 hover:border-cat-surface2"
+                      )}
+                    >
+                      720p (轻量)
+                    </button>
+                  </div>
+                </div>
+              </Show>
 
               {/* Camera Option */}
               <Show when={recordMode() === "slide"}>
@@ -431,7 +568,7 @@ export function Recorder(props: RecorderProps) {
               {/* Mic note */}
               <div class="flex items-center justify-between border-t border-cat-surface0 pt-2 text-cat-subtext0">
                 <span>🎙️ 麦克风口播</span>
-                <span class="text-cat-teal font-medium">默认开启</span>
+                <span class="text-cat-teal font-medium">单声道降噪</span>
               </div>
 
               {/* Start Button */}
