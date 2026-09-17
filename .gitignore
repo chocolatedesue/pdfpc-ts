@@ -38,3 +38,7 @@ src/vendor/
 
 /target
 /pkg
+
+# Local deployment & artifacts
+deploy.sh
+wasm/

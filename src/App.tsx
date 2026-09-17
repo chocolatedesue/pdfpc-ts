@@ -228,8 +228,8 @@ function PopupRoot() {
     return () => w()?.window.removeEventListener("keydown", handler);
   });
   return (
-    <div class="aspect-video">
-      <div class="overflow-hidde h-[min(100vh,calc(100vw*9/16))] w-[min(100vw,calc(100vh*16/9))]">
+    <div class="grid h-screen w-screen place-items-center overflow-hidden bg-black">
+      <div class="h-[min(100vh,calc(100vw*9/16))] w-[min(100vw,calc(100vh*16/9))] overflow-hidden">
         <Show when={docImages()[globalCount()]}>
           <img
             src={docImages()[globalCount()]}
