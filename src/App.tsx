@@ -5,6 +5,7 @@ import { proxy, transfer, wrap } from "comlink";
 import { createSignal, For, onSettled, Show } from "solid-js";
 
 import { DropZone } from "./DropZone.tsx";
+import { Recorder } from "./Recorder.tsx";
 import type { obj } from "./pdfium-worker.ts";
 
 import _styles from "./main.css?inline";
@@ -478,6 +479,11 @@ function App() {
             toggled={!!w()}
             title="Show slide in new window"
             toggledTitle="Close slide window"
+          />
+          <Recorder
+            globalCount={globalCount}
+            filePageCount={filePageCount}
+            docImages={docImages}
           />
         </div>
         {/* ends */}
