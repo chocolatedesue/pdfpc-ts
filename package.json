@@ -9,7 +9,9 @@
     "preview": "vite preview --configLoader native",
     "fmt": "oxfmt",
     "lint": "oxlint",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "cli": "bun run cli.ts",
+    "build:cli": "bun build --compile --outfile=bin/pdfpc cli.ts"
   },
   "devDependencies": {
     "@hyzyla/pdfium": "^2.1.13",
@@ -35,5 +37,8 @@
   },
   "engines": {
     "node": ">=24.10.0"
+  },
+  "bin": {
+    "pdfpc": "./cli.ts"
   }
 }

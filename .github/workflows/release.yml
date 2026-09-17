@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name for the release (e.g. v1.0.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build Web Application
+        run: pnpm run build
+
+      - name: Prepare Release Directory
+        run: mkdir -p release-assets package
+
+      - name: Package Web Static Bundle
+        run: |
+          cd dist && zip -r ../release-assets/pdfpc-web-dist.zip . && cd ..
+
+      - name: Build Standalone CLI Binaries
+        run: |
+          bun build --compile --target=bun-linux-x64 --outfile=release-assets/pdfpc-linux-x64 cli.ts
+          bun build --compile --target=bun-linux-arm64 --outfile=release-assets/pdfpc-linux-arm64 cli.ts
+          bun build --compile --target=bun-darwin-arm64 --outfile=release-assets/pdfpc-darwin-arm64 cli.ts
+          bun build --compile --target=bun-darwin-x64 --outfile=release-assets/pdfpc-darwin-x64 cli.ts
+          bun build --compile --target=bun-windows-x64 --outfile=release-assets/pdfpc-windows-x64.exe cli.ts
+
+      - name: Package Offline Bundles (Binary + Web Assets)
+        run: |
+          # Copy web assets to package template
+          cp -r dist package/dist
+
+          # Linux x64
+          cp release-assets/pdfpc-linux-x64 package/pdfpc
+          tar -czf release-assets/pdfpc-linux-x64.tar.gz -C package pdfpc dist
+
+          # Linux ARM64
+          cp release-assets/pdfpc-linux-arm64 package/pdfpc
+          tar -czf release-assets/pdfpc-linux-arm64.tar.gz -C package pdfpc dist
+
+          # macOS ARM64 (Apple Silicon)
+          cp release-assets/pdfpc-darwin-arm64 package/pdfpc
+          tar -czf release-assets/pdfpc-darwin-arm64.tar.gz -C package pdfpc dist
+
+          # macOS x64 (Intel)
+          cp release-assets/pdfpc-darwin-x64 package/pdfpc
+          tar -czf release-assets/pdfpc-darwin-x64.tar.gz -C package pdfpc dist
+
+          # Windows x64
+          cp release-assets/pdfpc-windows-x64.exe package/pdfpc.exe
+          cd package && zip -r ../release-assets/pdfpc-windows-x64.zip pdfpc.exe dist && cd ..
+
+      - name: Determine Release Tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            echo "tag=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: |
+            release-assets/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -182,18 +182,47 @@ const [isReady, setIsReady] = createSignal(false);
 
 const [w, setW] = createSignal<WindowProxy | null>(null);
 
+export interface PageTextRect {
+  text: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export interface PageTextData {
+  text: string;
+  rects: PageTextRect[];
+}
+
 const OVERVIEW = 0,
   PRESENTER = 1;
 
 const [viewMode, setViewMode] = createSignal(OVERVIEW);
 const [hasNotes, setHasNotes] = createSignal(false);
+const [docTexts, setDocTexts] = createSignal<Array<PageTextData | undefined>>([]);
+const [copyToast, setCopyToast] = createSignal<string | null>(null);
 
-export function setDocImagesWrapper(index: number, url: string) {
+
+export function setDocImagesWrapper(
+  index: number,
+  url: string,
+  text?: string,
+  rects?: PageTextRect[],
+) {
+
   setDocImages((prev) => {
     const newArr = [...prev];
     newArr[index] = url;
     return newArr;
   });
+  if (text !== undefined || rects !== undefined) {
+    setDocTexts((prev) => {
+      const newArr = [...prev];
+      newArr[index] = { text: text || "", rects: rects || [] };
+      return newArr;
+    });
+  }
   if (index === 0) {
     const img = new Image();
     img.onload = () => {
@@ -205,9 +234,102 @@ export function setDocImagesWrapper(index: number, url: string) {
   }
 }
 
+const copyCurrentText = async () => {
+  const current = docTexts()[globalCount()];
+  let textToCopy = "";
+  if (current && current.text) {
+    if (hasNotes()) {
+      const rightRects = current.rects.filter((r) => r.left >= 50);
+      if (rightRects.length > 0) {
+        textToCopy = rightRects.map((r) => r.text).join("\n");
+      } else {
+        textToCopy = current.text;
+      }
+    } else {
+      textToCopy = current.text;
+    }
+  }
+
+  if (!textToCopy.trim()) {
+    setCopyToast("当前页无文本");
+    setTimeout(() => setCopyToast(null), 2000);
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(textToCopy);
+    setCopyToast("已复制！");
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = textToCopy;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    setCopyToast("已复制！");
+  }
+  setTimeout(() => setCopyToast(null), 2000);
+};
+
+function TextLayer(props: {
+  rects?: PageTextRect[];
+  half?: "all" | "left" | "right";
+  class?: string;
+}) {
+  const activeRects = () => props.rects || [];
+
+  return (
+    <div
+      class={cx(
+        "absolute inset-0 z-10 overflow-hidden select-text pointer-events-auto",
+        props.class,
+      )}
+      style={{ "user-select": "text", "-webkit-user-select": "text" }}
+    >
+      <For each={activeRects()}>
+        {(r) => {
+          let left = r.left;
+          let width = r.width;
+          if (props.half === "left") {
+            if (r.left >= 50) return null;
+            left = r.left * 2;
+            width = r.width * 2;
+          } else if (props.half === "right") {
+            if (r.left + r.width <= 50) return null;
+            left = (r.left - 50) * 2;
+            width = r.width * 2;
+          }
+
+          return (
+            <span
+              class="absolute cursor-text whitespace-pre text-transparent selection:bg-cat-teal/40 selection:text-cat-text"
+              style={{
+                left: `${left}%`,
+                top: `${r.top}%`,
+                width: `${width}%`,
+                height: `${r.height}%`,
+                "font-size": `calc(${r.height}cqh * 0.9)`,
+                "line-height": "1",
+                display: "inline-block",
+              }}
+              title={r.text}
+            >
+              {r.text}
+            </span>
+          );
+        }}
+      </For>
+    </div>
+  );
+}
+
 _worker.addEventListener("message", (event) => {
   if (event.data.type === "worker-ready") {
     setIsReady(true);
+
   }
 });
 
@@ -234,6 +356,17 @@ const handler = (e: KeyboardEvent) => {
     case "Escape":
       if (w()) {
         closePopup();
+      }
+      break;
+    case "c":
+    case "C":
+      if (
+        document.activeElement?.tagName !== "INPUT" &&
+        document.activeElement?.tagName !== "TEXTAREA"
+      ) {
+        if (!window.getSelection()?.toString()) {
+          void copyCurrentText();
+        }
       }
       break;
     default:
@@ -409,11 +542,30 @@ function App() {
                       hasNotes() ? "object-right" : "object-center",
                     )}
                   />
+                  <TextLayer
+                    rects={docTexts()[globalCount()]?.rects}
+                    half={hasNotes() ? "right" : "all"}
+                  />
                   <div class="absolute -top-8 font-mono">
                     {secondsToMMSS(timer())}
                   </div>
-                  <div class="absolute -top-8 right-0 font-mono">
-                    {globalCount() + 1}/{filePageCount()}
+                  <div class="absolute -top-8 right-0 flex items-center gap-3 font-mono">
+                    <Show when={copyToast()}>
+                      <span class="text-xs text-cat-teal font-sans">
+                        {copyToast()}
+                      </span>
+                    </Show>
+                    <button
+                      onClick={copyCurrentText}
+                      title="复制当前页面文本 (快捷键: C)"
+                      class="flex items-center gap-1 rounded px-2 py-0.5 text-xs bg-cat-surface0/80 hover:bg-cat-surface1 border border-cat-surface2 text-cat-subtext0 hover:text-cat-text transition-all cursor-pointer"
+                    >
+                      <span class="icon-[fluent--copy-16-regular] text-sm" />
+                      <span>复制文本</span>
+                    </button>
+                    <span>
+                      {globalCount() + 1}/{filePageCount()}
+                    </span>
                   </div>
                 </Show>
               </div>
@@ -449,7 +601,7 @@ function App() {
                   </div>
                 }
               >
-                <div class="aspect-video w-full overflow-hidden">
+                <div class="relative aspect-video w-full overflow-hidden">
                   <Show when={docImages()[globalCount()]}>
                     <img
                       src={docImages()[globalCount()]}
@@ -459,6 +611,10 @@ function App() {
                         "aspect-video h-full object-cover object-left",
                         viewClasses[globalCount()],
                       )}
+                    />
+                    <TextLayer
+                      rects={docTexts()[globalCount()]?.rects}
+                      half="left"
                     />
                   </Show>
                 </div>
@@ -557,7 +713,9 @@ function Loading() {
   onSettled(() => {
     return () => {
       if (data) {
-        void handleFileSelect("no-notes")(data);
+        const params = new URLSearchParams(window.location.search);
+        const mode = params.get("mode") === "notes-right" ? "notes-right" : "no-notes";
+        void handleFileSelect(mode)(data);
       }
       console.log("Loading unmounted");
     };
@@ -576,24 +734,24 @@ function Layout(props: { children: JSX.Element }) {
 }
 
 async function fetchPDF(url?: string): Promise<File | undefined> {
-  console.log(url);
   const params = url
-    ? new URLSearchParams(new URL(url, window.location).search)
+    ? new URLSearchParams(new URL(url, window.location.href).search)
     : new URLSearchParams(window.location.search);
-  const fileUrl = params.get("file");
-  console.log(params, fileUrl);
+  const fileUrl = params.get("file") || params.get("pdf");
   if (fileUrl) {
-    // fetch
-    // and convert to File
-    const res = await fetch(fileUrl);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch file: ${res.statusText}`);
+    try {
+      const res = await fetch(fileUrl);
+      if (!res.ok) {
+        throw new Error(`Failed to fetch file: ${res.status} ${res.statusText}`);
+      }
+      const blob = await res.blob();
+      const rawName = fileUrl.split("/").pop()?.split("?")[0] || "presentation.pdf";
+      const fileName = rawName.toLowerCase().endsWith(".pdf") ? rawName : `${rawName}.pdf`;
+      return new File([blob], fileName, { type: "application/pdf" });
+    } catch (err) {
+      console.error("fetchPDF error:", err);
+      return undefined;
     }
-    const blob = await res.blob();
-    const fileName = fileUrl.split("/").pop() || "downloaded.pdf";
-    const file = new File([blob], fileName, { type: blob.type });
-    console.log(res);
-    return file;
   }
 }
 

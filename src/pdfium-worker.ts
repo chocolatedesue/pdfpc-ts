@@ -5,7 +5,7 @@ import { expose } from "comlink";
 import type { Setter } from "solid-js";
 
 import init, { bitmap_to_png } from "../pkg/bitmap_to_png.js";
-import type { setDocImagesWrapper } from "./App.tsx";
+import type { setDocImagesWrapper, PageTextRect } from "./App.tsx";
 
 const [pdfium, _] = await Promise.all([
   PDFiumLibrary.init({
@@ -27,8 +27,6 @@ async function renderFunction(
   return png;
 }
 
-// console.log("Vips version", vips.version());
-
 let doc: PDFiumDocument | undefined = undefined;
 
 export class obj {
@@ -46,39 +44,92 @@ export class obj {
     return doc.getPageCount();
   };
   static renderPDF = async function (
-    // target: SetStoreFunction<(string | undefined)[]>,
     pageIndex: number,
-    target: typeof setDocImagesWrapper,
-    // target: (string | undefined)[],
+    callback: typeof setDocImagesWrapper,
   ) {
     if (!doc) {
       throw new Error("Document not loaded");
     }
-    // for (const page of doc.pages()) {
     const page = doc.getPage(pageIndex);
     console.log(`${page.number} - rendering...`);
 
-    // Render PDF page to PNG image
+    // 1. Extract text and rects BEFORE page.render closes the page!
+    let pageText = "";
+    const rects: PageTextRect[] = [];
+    try {
+      pageText = page.getText() || "";
+      const pageSize = page.getOriginalSize();
+      const pdfModule = (page as any).module;
+      const pIdx = (page as any).pageIdx;
+
+      if (pdfModule && pIdx !== undefined) {
+        const textPage = pdfModule._FPDFText_LoadPage(pIdx);
+        if (textPage) {
+          const count = pdfModule._FPDFText_CountRects(textPage, 0, -1);
+          if (count > 0) {
+            const rectBuffer = pdfModule.wasmExports.malloc(32);
+            const textBufSize = 1024;
+            const textBuffer = pdfModule.wasmExports.malloc(textBufSize);
+
+            for (let i = 0; i < count; i++) {
+              pdfModule._FPDFText_GetRect(
+                textPage,
+                i,
+                rectBuffer,
+                rectBuffer + 8,
+                rectBuffer + 16,
+                rectBuffer + 24,
+              );
+              const coords = new Float64Array(pdfModule.HEAPU8.buffer, rectBuffer, 4);
+              const [left, top, right, bottom] = [coords[0], coords[1], coords[2], coords[3]];
+
+              const len = pdfModule._FPDFText_GetBoundedText(
+                textPage,
+                left,
+                top,
+                right,
+                bottom,
+                textBuffer,
+                textBufSize / 2,
+              );
+              let str = "";
+              if (len > 0) {
+                str = new TextDecoder("utf-16le").decode(
+                  new Uint8Array(pdfModule.HEAPU8.buffer, textBuffer, (len - 1) * 2),
+                );
+              }
+
+              if (str.trim().length > 0 && pageSize.originalWidth > 0 && pageSize.originalHeight > 0) {
+                rects.push({
+                  text: str,
+                  left: Math.max(0, (left / pageSize.originalWidth) * 100),
+                  top: Math.max(0, ((pageSize.originalHeight - top) / pageSize.originalHeight) * 100),
+                  width: Math.min(100, ((right - left) / pageSize.originalWidth) * 100),
+                  height: Math.min(100, ((top - bottom) / pageSize.originalHeight) * 100),
+                });
+              }
+            }
+
+            pdfModule.wasmExports.free(rectBuffer);
+            pdfModule.wasmExports.free(textBuffer);
+          }
+          pdfModule._FPDFText_ClosePage(textPage);
+        }
+      }
+    } catch (extractErr) {
+      console.warn("Text extraction failed for page", pageIndex, extractErr);
+    }
+
+    // 2. Render PDF page to PNG image (this closes the page handle)
     const image = await page.render({
       scale: 3, // 3x scale (72 DPI is the default)
-      render: renderFunction, // sharp function to convert raw bitmap data to PNG
+      render: renderFunction,
     });
 
-    // Save the PNG image to the output folder
-    // await fs.writeFile(`output/${page.number}.png`, Buffer.from(image.data));
-
-    // const b = image.data.toBase64();
-    // console.image("data:image/png;base64," + b, 150);
     const blob = new Blob([image.data], { type: "image/png" });
     const imgUrl = URL.createObjectURL(blob);
-    target(page.number, imgUrl);
-    // target[page.number] = imgUrl;
-    // target(
-    //   produce((state) => {
-    //     state[page.number] = imgUrl;
-    //   }),
-    // );
-    // }
+
+    await callback(page.number, imgUrl, pageText, rects);
   };
 }
 

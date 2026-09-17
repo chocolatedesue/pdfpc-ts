@@ -37,8 +37,11 @@ src/vendor/
 # Added by cargo
 
 /target
-/pkg
 
 # Local deployment & artifacts
 deploy.sh
 wasm/
+
+bin/
+test-*.cjs
+test-*.js
