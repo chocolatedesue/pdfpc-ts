@@ -3,11 +3,10 @@
 @plugin "./iconify-compat.mjs";
 
 :root {
-  /* @apply scroll-smooth; */
   color-scheme: light dark;
   text-autospace: normal;
 
-  /* Only affacts the popup window */
+  /* Only affects the popup window */
   &:not(:has(#root)) {
     @apply grid min-h-screen place-items-center bg-black;
   }
@@ -22,14 +21,27 @@
 #root {
   @apply bg-cat-base text-cat-text;
   @apply grid min-h-screen grid-rows-[auto_1fr_auto] print:block;
-
-  @apply font-serif;
+  font-family:
+    "Inter", "Noto Sans SC", "PingFang SC", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, sans-serif;
 }
 
 ::view-transition-group(anything) {
   @apply z-20;
 }
 
-/* ::view-transition-group(*) {
-  outline: 2px solid red;
-} */
+/* Smooth custom scrollbar for notes panel and overview grid */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 156, 187, 0.35);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(129, 200, 190, 0.65);
+}
