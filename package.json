@@ -1,6 +1,6 @@
 {
   "name": "pdfpc-ts",
-  "version": "0.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,8 @@
     "lint": "oxlint",
     "deploy": "wrangler deploy",
     "cli": "bun run cli.ts",
-    "build:cli": "bun build --compile --outfile=bin/pdfpc cli.ts"
+    "build:cli": "bun build --compile --outfile=bin/pdfpc cli.ts",
+    "build:all": "vite build --configLoader native && bun build --compile --outfile=bin/pdfpc cli.ts"
   },
   "devDependencies": {
     "@hyzyla/pdfium": "^2.1.13",

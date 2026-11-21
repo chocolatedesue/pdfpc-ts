@@ -34,6 +34,14 @@ export class obj {
     setIsReady(true);
   };
   static loadPDF = async (file: Uint8Array) => {
+    if (doc) {
+      try {
+        doc.destroy();
+      } catch (e) {
+        console.warn("Failed to destroy previous PDFiumDocument:", e);
+      }
+      doc = undefined;
+    }
     doc = await pdfium.loadDocument(file);
     console.log("Loaded PDF document in worker:", doc);
   };
@@ -46,12 +54,12 @@ export class obj {
   static renderPDF = async function (
     pageIndex: number,
     callback: typeof setDocImagesWrapper,
+    scale = 3,
   ) {
     if (!doc) {
       throw new Error("Document not loaded");
     }
     const page = doc.getPage(pageIndex);
-    console.log(`${page.number} - rendering...`);
 
     // 1. Extract text and rects BEFORE page.render closes the page!
     let pageText = "";
@@ -68,50 +76,77 @@ export class obj {
           const count = pdfModule._FPDFText_CountRects(textPage, 0, -1);
           if (count > 0) {
             const rectBuffer = pdfModule.wasmExports.malloc(32);
-            const textBufSize = 1024;
+            const textBufSize = 2048;
             const textBuffer = pdfModule.wasmExports.malloc(textBufSize);
 
-            for (let i = 0; i < count; i++) {
-              pdfModule._FPDFText_GetRect(
-                textPage,
-                i,
-                rectBuffer,
-                rectBuffer + 8,
-                rectBuffer + 16,
-                rectBuffer + 24,
-              );
-              const coords = new Float64Array(pdfModule.HEAPU8.buffer, rectBuffer, 4);
-              const [left, top, right, bottom] = [coords[0], coords[1], coords[2], coords[3]];
-
-              const len = pdfModule._FPDFText_GetBoundedText(
-                textPage,
-                left,
-                top,
-                right,
-                bottom,
-                textBuffer,
-                textBufSize / 2,
-              );
-              let str = "";
-              if (len > 0) {
-                str = new TextDecoder("utf-16le").decode(
-                  new Uint8Array(pdfModule.HEAPU8.buffer, textBuffer, (len - 1) * 2),
+            try {
+              for (let i = 0; i < count; i++) {
+                pdfModule._FPDFText_GetRect(
+                  textPage,
+                  i,
+                  rectBuffer,
+                  rectBuffer + 8,
+                  rectBuffer + 16,
+                  rectBuffer + 24,
                 );
-              }
+                const coords = new Float64Array(
+                  pdfModule.HEAPU8.buffer,
+                  rectBuffer,
+                  4,
+                );
+                const [left, top, right, bottom] = [
+                  coords[0],
+                  coords[1],
+                  coords[2],
+                  coords[3],
+                ];
 
-              if (str.trim().length > 0 && pageSize.originalWidth > 0 && pageSize.originalHeight > 0) {
-                rects.push({
-                  text: str,
-                  left: Math.max(0, (left / pageSize.originalWidth) * 100),
-                  top: Math.max(0, ((pageSize.originalHeight - top) / pageSize.originalHeight) * 100),
-                  width: Math.min(100, ((right - left) / pageSize.originalWidth) * 100),
-                  height: Math.min(100, ((top - bottom) / pageSize.originalHeight) * 100),
-                });
+                const len = pdfModule._FPDFText_GetBoundedText(
+                  textPage,
+                  left,
+                  top,
+                  right,
+                  bottom,
+                  textBuffer,
+                  textBufSize / 2,
+                );
+                let str = "";
+                if (len > 0) {
+                  const byteLen = Math.min((len - 1) * 2, textBufSize);
+                  str = new TextDecoder("utf-16le").decode(
+                    new Uint8Array(pdfModule.HEAPU8.buffer, textBuffer, byteLen),
+                  );
+                }
+
+                if (
+                  str.trim().length > 0 &&
+                  pageSize.originalWidth > 0 &&
+                  pageSize.originalHeight > 0
+                ) {
+                  rects.push({
+                    text: str,
+                    left: Math.max(0, (left / pageSize.originalWidth) * 100),
+                    top: Math.max(
+                      0,
+                      ((pageSize.originalHeight - top) /
+                        pageSize.originalHeight) *
+                        100,
+                    ),
+                    width: Math.min(
+                      100,
+                      ((right - left) / pageSize.originalWidth) * 100,
+                    ),
+                    height: Math.min(
+                      100,
+                      ((top - bottom) / pageSize.originalHeight) * 100,
+                    ),
+                  });
+                }
               }
+            } finally {
+              pdfModule.wasmExports.free(rectBuffer);
+              pdfModule.wasmExports.free(textBuffer);
             }
-
-            pdfModule.wasmExports.free(rectBuffer);
-            pdfModule.wasmExports.free(textBuffer);
           }
           pdfModule._FPDFText_ClosePage(textPage);
         }
@@ -122,7 +157,7 @@ export class obj {
 
     // 2. Render PDF page to PNG image (this closes the page handle)
     const image = await page.render({
-      scale: 3, // 3x scale (72 DPI is the default)
+      scale,
       render: renderFunction,
     });
 
