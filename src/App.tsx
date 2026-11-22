@@ -1787,16 +1787,26 @@ function SelectFile() {
             纯本地浏览器运行的双屏幻灯片放映、讲稿实时提词复制与高清排练录制工具。文件完全在本地内存中解析，绝不上传服务器。
           </p>
         </div>
-        <div class="flex items-center gap-2.5">
+        <div class="flex flex-wrap items-center gap-2.5">
           <button
-            onClick={() => void loadRemoteOrDemo("./example.pdf", "auto")}
+            onClick={() => void loadRemoteOrDemo("./example.pdf", "notes-right")}
             disabled={isLoadingDemo()}
             class="flex items-center gap-2 rounded-xl bg-cat-teal px-4 py-2.5 text-xs font-bold text-cat-base shadow-lg hover:bg-cat-teal/90 transition-all cursor-pointer disabled:opacity-50"
+            title="加载 8 页中英双语 32:9 左右双屏带提词讲稿的全功能互动示例"
           >
             <span class="icon-[fluent--play-16-filled]" />
             <span>
-              {isLoadingDemo() ? "正在加载示例..." : "一键体验 Touying 示例 PDF"}
+              {isLoadingDemo() ? "正在加载示例..." : "体验 32:9 双屏带讲稿示例"}
             </span>
+          </button>
+          <button
+            onClick={() => void loadRemoteOrDemo("./example-16x9.pdf", "no-notes")}
+            disabled={isLoadingDemo()}
+            class="flex items-center gap-1.5 rounded-xl border border-cat-teal/60 bg-cat-teal/15 px-3.5 py-2.5 text-xs font-bold text-cat-teal hover:bg-cat-teal/25 transition-all cursor-pointer disabled:opacity-50"
+            title="加载 16:9 标准单屏学术汇报示例"
+          >
+            <span class="icon-[fluent--slide-text-16-regular]" />
+            <span>体验 16:9 标准单屏示例</span>
           </button>
           <a
             href="https://github.com/acam-infra/pdfpc-ts"

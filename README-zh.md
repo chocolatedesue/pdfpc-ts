@@ -7,9 +7,11 @@
 别人无需安装任何环境，直接在浏览器打开以下任一 GitHub Pages 地址即可上传本地 PDF 或通过 URL 参数直接放映（所有 PDF 解析均在浏览器本地 WebAssembly 内存中完成，文件绝不上传服务器）：
 
 - **`acam-infra` 组织版在线工作台**：[**https://acam-infra.github.io/pdfpc-ts/**](https://acam-infra.github.io/pdfpc-ts/)
-  - 直接加载内置 Touying 示例：[`https://acam-infra.github.io/pdfpc-ts/?file=./example.pdf&duration=15`](https://acam-infra.github.io/pdfpc-ts/?file=./example.pdf&duration=15)
+  - 体验 **32:9 双屏带讲稿全功能示例**（8 页中英双语 + 架构图/公式/基准表/提词稿）：[`https://acam-infra.github.io/pdfpc-ts/?file=./example.pdf&mode=notes-right&duration=15`](https://acam-infra.github.io/pdfpc-ts/?file=./example.pdf&mode=notes-right&duration=15)
+  - 体验 **16:9 标准单屏学术汇报示例**：[`https://acam-infra.github.io/pdfpc-ts/?file=./example-16x9.pdf&mode=no-notes&duration=15`](https://acam-infra.github.io/pdfpc-ts/?file=./example-16x9.pdf&mode=no-notes&duration=15)
 - **`chocolatedesue` 个人版在线工作台**：[**https://chocolatedesue.github.io/pdfpc-ts/**](https://chocolatedesue.github.io/pdfpc-ts/)
-  - 直接加载内置 Touying 示例：[`https://chocolatedesue.github.io/pdfpc-ts/?file=./example.pdf&duration=15`](https://chocolatedesue.github.io/pdfpc-ts/?file=./example.pdf&duration=15)
+  - 体验 **32:9 双屏带讲稿全功能示例**：[`https://chocolatedesue.github.io/pdfpc-ts/?file=./example.pdf&mode=notes-right&duration=15`](https://chocolatedesue.github.io/pdfpc-ts/?file=./example.pdf&mode=notes-right&duration=15)
+  - 体验 **16:9 标准单屏学术汇报示例**：[`https://chocolatedesue.github.io/pdfpc-ts/?file=./example-16x9.pdf&mode=no-notes&duration=15`](https://chocolatedesue.github.io/pdfpc-ts/?file=./example-16x9.pdf&mode=no-notes&duration=15)
 
 > **源码仓库**：[`acam-infra/pdfpc-ts`](https://github.com/acam-infra/pdfpc-ts)（同步镜像：[`chocolatedesue/pdfpc-ts`](https://github.com/chocolatedesue/pdfpc-ts)，上游：[`Master-Hash/pdfpc-ts`](https://github.com/Master-Hash/pdfpc-ts)）
 
